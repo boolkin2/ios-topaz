@@ -42,9 +42,11 @@ env:
 
 jobs:
   build:
-    # macos-14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
-    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
-    runs-on: macos-14
+    # macos-14 was retired from GitHub Actions on 2026-11-02; no hosted image ships
+    # Xcode 15.x any more. macos-15 has Xcode 16.0-16.4 (16.4 default) + 26.x.
+    # Xcode 16's iig emits IORPC.kernelContent, which xnu-8796 lacks, so patch
+    # 0084-iig-kernelcontent adds that field to xnu-8796 instead.
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +77,10 @@ jobs:
           sudo chmod +x /usr/local/bin/xcodes
           sw_vers
           ls -d /Applications/Xcode*.app
-          XC=$(ls -d /Applications/Xcode_*.app | sort -V | head -1)
+          # Pin Xcode 16.4 (the macos-15 default). `sort -V | head -1` would pick
+          # Xcode_16.app (16.0); 16.4 is the newest 16.x, i.e. the iig whose
+          # IORPC.kernelContent output patch 0084 accommodates.
+          XC=/Applications/Xcode_16.4.app
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XC"
           xcodebuild -version

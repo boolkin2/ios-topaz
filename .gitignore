@@ -7,4 +7,5 @@ research/
 shim/out/
 xnu/out/
 xnu/out-*/
+xnu/patches_topaz_full/
 __pycache__/

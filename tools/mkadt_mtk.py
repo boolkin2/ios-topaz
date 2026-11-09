@@ -34,8 +34,9 @@ GICR, GICR_SIZE = 0x0c440000, 0x200000
 # MT6983 architected timer: 13 MHz; virtual timer PPI is INTID 27.
 TIMEBASE = 13000000
 VTIMER_INTID = 27
-# Boot CPU MPIDR (Aff1:Aff0), NOT a logical ID. Placeholder 0x0 until the
-# shim reports the real MPIDR_EL1 of the boot core; change only this value.
+# Boot CPU MPIDR (Aff1:Aff0), NOT a logical ID. Confirmed on hardware by the
+# shim's CPUI pmsg record: MPIDR_EL1 affinity 0x0, MIDR 0x410fd462 = Cortex-A510
+# r0p2, ID_AA64MMFR0.TGran16=1 (16K granule supported -> no PSCI handoff needed).
 BOOT_MPIDR = 0x0
 SWEET_ECID = 0x544f50415a000001  # 'TOPAZ' + 1, synthetic (as in mkadt.py)
 
@@ -118,17 +119,18 @@ def build(seed=None):
         # with CSR_ALLOW_UNRESTRICTED_FS (vm_unix.c shared region checks).
         node('asmb', [ph(), ('lp-sip0', u64(0x6f)), ('lp-sip1', u32(1))])])
 
-    # MT6983 first boot: a single CPU node. The boot core is believed to be a
-    # Cortex-A510; BOOT_MPIDR is the shim-confirmed MPIDR placeholder (0x0).
+    # MT6983 first boot: a single CPU node. Boot core confirmed by the shim:
+    # Cortex-A510, MPIDR affinity 0x0, TGran16=1 (16K pages OK, no handoff).
     # No secondary CPUs until SMP bring-up exists. Topology properties are
     # descriptive (ml_parse_cpu_topology / createNubs assign the real IDs).
-    # NOTE: patch 0018's SweetCPU IONameMatch is still 'qcom,kryo470'; with
-    # this compatible list it will not match cpu0 until that patch (or this
-    # list) is revisited.
+    # NOTE on compatible: 'qcom,kryo470' is listed FIRST because SweetCPU's
+    # IONameMatch is 'qcom,kryo470' in the prebuilt topaz kernel (patch 0018);
+    # our mt6983 branch changes that match to 'arm,cortex-a510'. Keeping both
+    # strings makes this ADT work with either kernel build.
     cpu0 = node('cpu0', [
         ph(),
         ('device_type', cstr('cpu')),
-        ('compatible', cstr('arm,cortex-a510') + cstr('ARM,v8')),
+        ('compatible', cstr('qcom,kryo470') + cstr('arm,cortex-a510') + cstr('ARM,v8')),
         ('reg', u32(BOOT_MPIDR)),  # actual MPIDR Aff1:Aff0, NOT logical ID
         ('cpu-id', u32(0)),
         ('cluster-id', u32(0)),

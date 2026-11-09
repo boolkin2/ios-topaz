@@ -1,0 +1,87 @@
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -87,7 +87,59 @@
+ 	msr		SCTLR_EL1, x0
+ #endif /* defined(KERNEL_INTEGRITY_KTRR) */
+ .endmacro
+ 
++#if defined(SWEET)
++/*
++ * SWEET_PMSG_MARK - append one pmsg marker record.
++ *
++ * Appends one pmsg record to the ramoops zone at PA 0x48130000. The
++ * bare-metal shim initialized the zone header ({ sig="DBGC", start=0,
++ * size } at +0/+4/+8) and appended its own records before jumping here,
++ * so this only reads size and appends; it never re-initializes.
++ * Record: 16-byte header { u32 tag (4 ASCII chars, little-endian),
++ * u32 seq, u32 n, u32 xor-of-the-n-data-words } then n*4 data bytes;
++ * n is always 1 here. seq is the published byte count before this
++ * record: monotonic and storage-free, which matters while the MMU is
++ * off and no writable link-relative state is reachable.
++ *
++ * Publication order (reset survivability, identical to the shim):
++ * data+header -> dc civac rec -> dc civac rec+64 -> dsb sy -> size ->
++ * dc civac base -> dsb sy. dc civac is mandatory: MMU-off accesses are
++ * Device memory, and after MMU-on the V=P mapping is cacheable.
++ *
++ * Clobbers x1-x8 only. Uses no stack (SP is not set up at the first
++ * call site) and never touches x0 or x20-x30. The three positional
++ * args are the tag low half, the tag high half, and the data value.
++ */
++.macro SWEET_PMSG_MARK
++	MOV64	x1, 0x48130000					// pmsg ramoops zone base (PA=VA)
++	ldr		w2, [x1, #8]						// bytes published so far
++	MOV64	x7, (0x40000 - 32)					// zone size guard
++	cmp		x2, x7
++	b.hs	9f								// full/corrupt: never overrun the zone
++	add		x3, x1, #12
++	add		x3, x3, x2						// x3 = append address of this record
++	mov		w4, $2							// the single data word
++	str		w4, [x3, #16]						// data[0]
++	movz	w5, $0							// tag: 4 ASCII chars, little-endian
++	movk	w5, $1, lsl #16
++	str		w5, [x3, #0]						// tag
++	str		w2, [x3, #4]						// seq
++	mov		w6, #1
++	str		w6, [x3, #8]						// n = 1
++	str		w4, [x3, #12]						// xor = data[0]
++	dc		civac, x3
++	add		x7, x3, #64
++	dc		civac, x7
++	dsb		sy
++	add		w2, w2, #(16 + 4)					// record length: header + 1 word
++	str		w2, [x1, #8]						// publish new size
++	dc		civac, x1
++	dsb		sy
++9:
++.endmacro
++#endif /* SWEET */
++
+ /*
+  * Checks the reset handler for global and CPU-specific reset-assist functions,
+  * then jumps to the reset handler with boot args and cpu data. This is copied
+@@ -463,6 +515,11 @@ LEXT(start_first_cpu)
+ 	mov		x20, x0
+ 	mov		x21, #0
+ 
++#if defined(SWEET)
++	/* X000: kernel entered from the shim; MMU off, flat PA=VA, no stack. */
++	SWEET_PMSG_MARK #0x3058, #0x3030, #0		// "X000", value 0
++#endif
++
+ 	// Set low reset vector before attempting any loads
+ 	adrp	x0, EXT(LowExceptionVectorBase)@page
+ 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+@@ -609,6 +666,11 @@ Lkernelcache_base_found:
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+ 
++#if defined(SWEET)
++	/* X001: bootstrap page tables built; the last marker with the MMU off. */
++	SWEET_PMSG_MARK #0x3058, #0x3130, #0		// "X001", value 0
++#endif
++
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 

@@ -1,0 +1,83 @@
+Build with the Xcode 16 iig: add IORPC.kernelContent (as in xnu-11215).
+
+GitHub Actions retired the macos-14 runner images (2026-11-02), so the
+kernel is now built on macos-15 where only Xcode 16.x / 26.x are available.
+The Xcode 16+ iig generates IORPC dispatchers (_Dispatch stubs in the
+*.iig.cpp files compiled into the kernel) that read the message back via
+    message = rpc.kernelContent;
+instead of calling IORPCMessageFromMach(rpc.message, false) like the
+Xcode 15 iig did.  The `IORPCMessage *kernelContent` member of struct
+IORPC was only added in macOS 15 (xnu-11215), so xnu-8796 does not have
+it and the generated code fails to compile.
+
+Backport the field (guarded by #ifdef KERNEL, exactly as Apple does in
+xnu-11215) into both copies of IORPC.h, and populate it at every point
+in IOUserServer.cpp where an IORPC reaches an iig-generated dispatcher:
+OSMetaClassBase::Invoke(), IOUserServer::kernelDispatch(), the rpc
+initializer in IOUserServer::server() and IOUserServerUEXTTrap().
+
+This is the inverse of blacktop/darwin-xnu-build patches/14.4+15.0
+iokit.patch, which rewrites `message = rpc.kernelContent` back to
+IORPCMessageFromMach() to build NEW xnu with an OLD iig.
+diff --git a/iokit/DriverKit/IORPC.h b/iokit/DriverKit/IORPC.h
+--- a/iokit/DriverKit/IORPC.h
++++ b/iokit/DriverKit/IORPC.h
+@@ -224,6 +224,9 @@
+ 	IORPCMessageMach * reply;
+ 	uint32_t           sendSize;
+ 	uint32_t           replySize;
++#ifdef KERNEL
++	IORPCMessage     * kernelContent;
++#endif /* KERNEL */
+ };
+ typedef struct IORPC IORPC;
+ 
+diff --git a/iokit/IOKit/IORPC.h b/iokit/IOKit/IORPC.h
+--- a/iokit/IOKit/IORPC.h
++++ b/iokit/IOKit/IORPC.h
+@@ -224,6 +224,9 @@
+ 	IORPCMessageMach * reply;
+ 	uint32_t           sendSize;
+ 	uint32_t           replySize;
++#ifdef KERNEL
++	IORPCMessage     * kernelContent;
++#endif /* KERNEL */
+ };
+ typedef struct IORPC IORPC;
+ 
+diff --git a/iokit/Kernel/IOUserServer.cpp b/iokit/Kernel/IOUserServer.cpp
+--- a/iokit/Kernel/IOUserServer.cpp
++++ b/iokit/Kernel/IOUserServer.cpp
+@@ -2381,6 +2381,7 @@
+ 	if (!message) {
+ 		return kIOReturnIPCError;
+ 	}
++	rpc.kernelContent = message;
+ 	message->flags |= kIORPCMessageKernel;
+ 
+ 	us = NULL;
+@@ -3054,6 +3055,7 @@
+ 	if (!message) {
+ 		return kIOReturnIPCError;
+ 	}
++	rpc.kernelContent = message;
+ 
+ 	if (OSObject_Instantiate_ID == message->msgid) {
+ 		ret = objectInstantiate(obj, rpc, message);
+@@ -3209,7 +3211,7 @@
+ 		msgout = (typeof(msgout))ikm_header(replykmsg);
+ 	}
+ 
+-	IORPC rpc = { .message = msgin, .reply = msgout, .sendSize = msgin->msgh.msgh_size, .replySize = replyAlloc };
++	IORPC rpc = { .message = msgin, .reply = msgout, .sendSize = msgin->msgh.msgh_size, .replySize = replyAlloc, .kernelContent = message };
+ 
+ 	if (object) {
+ 		kern_allocation_name_t prior;
+@@ -3358,6 +3360,7 @@
+ 	rpc.sendSize  = mach->msgh.msgh_size;
+ 	rpc.reply     = (IORPCMessageMach *) (p + inSize);
+ 	rpc.replySize = ((uint32_t) (sizeof(buffer.buffer) - inSize));    // inSize was checked
++	rpc.kernelContent = message;
+ 
+ 	message->objects[0] = 0;
+ 	if ((action = OSDynamicCast(OSAction, object))) {
