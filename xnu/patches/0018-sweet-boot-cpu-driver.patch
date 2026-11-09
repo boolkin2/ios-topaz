@@ -57,7 +57,7 @@ new file mode 100644
 +	if (!IOCPU::start(provider)) {
 +		return false;
 +	}
-+	cpuName = OSSymbol::withCStringNoCopy("Kryo 470");
++	cpuName = OSSymbol::withCStringNoCopy("Cortex-A510");
 +	if (cpuName == NULL) {
 +		return false;
 +	}
@@ -184,7 +184,7 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +    "   {"
 +    "     'IOClass'         = SweetCPU;"
 +    "     'IOProviderClass' = IOPlatformDevice;"
-+    "     'IONameMatch'     = 'qcom,kryo470';"
++    "     'IONameMatch'     = 'arm,cortex-a510';"
 +    "     'IOProbeScore'    = 10000:32;"
 +    "   },"
  #endif

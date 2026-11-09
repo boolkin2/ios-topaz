@@ -256,11 +256,11 @@ index 0000000..a044ad0
 +#endif /* ! ASSEMBLER */
 +
 +/*
-+ * Qualcomm numbers the architected timer PPIs 1/2/3/0 (secure phys, phys,
-+ * virt, hyp) instead of the usual 13/14/11/10: the virtual timer XNU uses
-+ * (CNTV) is INTID 16 + 3 = 19.
++ * MediaTek MT6983 uses the standard ARM architected timer PPI numbering
++ * 13/14/11/10 (secure phys, phys, virt, hyp): the virtual timer XNU uses
++ * (CNTV) is INTID 16 + 11 = 27.
 + */
-+#define SWEET_VTIMER_INTID        19
++#define SWEET_VTIMER_INTID        27
 +#define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
 +
 +#define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
