@@ -56,8 +56,11 @@ jobs:
           git init -q dxb
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
-          # 12.5-14.3 use the top-level patches dir; ours go next to blacktop's
-          cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
+          # 12.5-14.3 use the top-level patches dir; ours go next to blacktop's.
+          # The mt6983 minimal patch set carries no stage-*.sh scripts, so the
+          # .sh glob must be allowed to match nothing instead of failing the step.
+          cp xnu/patches/*.patch dxb/patches/
+          cp xnu/patches/*.sh dxb/patches/ 2>/dev/null || true
           # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64.
           # topaz: Cortex-A53/A73 (ARMv8.0), so the same -mcpu as the kernel
           # (clang's apple-m1 default emits LSE atomics and LDAPR)
