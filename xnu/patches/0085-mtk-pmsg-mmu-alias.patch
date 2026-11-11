@@ -1,7 +1,7 @@
 diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -670,6 +670,27 @@
+@@ -670,6 +670,30 @@
  	/* X001: bootstrap page tables built; the last marker with the MMU off. */
  	SWEET_PMSG_MARK #0x3058, #0x3130, #0		// "X001", value 0
  #endif
@@ -32,7 +32,7 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
  
  	/* Ensure TTEs are visible */
  	dsb		ish
-@@ -806,6 +827,13 @@
+@@ -806,6 +830,13 @@
  	MOV64   x0, SCTLR_EL1_DEFAULT
  	MSR_SCTLR_EL1_X0
  	isb		sy
@@ -46,7 +46,7 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
  
  #if !VMAPPLE && !defined(SWEET)
  	MOV64   x1, SCTLR_EL1_DEFAULT
-@@ -869,6 +897,11 @@
+@@ -869,6 +900,11 @@
  	mov	lr, x21
  #endif
  
