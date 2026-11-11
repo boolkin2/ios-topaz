@@ -13,7 +13,10 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 +	 * the kernel (0xa0000000) shares it; pmsg L2 index 0x24 does not clash
 +	 * with the kernel's 0x50..0x5c. MAIR attr3 = 0x00 (Device-nGnRnE) so the
 +	 * block is never speculatively fetched and needs no cache maintenance
-+	 * beyond the dc civac already in SWEET_PMSG_MARK. EL1-only, XN/PXN.
++	 * beyond the dc civac already in SWEET_PMSG_MARK. AP=AP_RWNA (EL1 RW,
++	 * EL0 no-access): PAN=1 (arm_init msr pan,#1) denies EL1 access to
++	 * EL0-accessible pages (AP_RWRW alias died exactly at C007); RWNA
++	 * is untouched by PAN. XN/PXN.
 +	 * Clobbers x5-x7 only; x0-x4, x14-x15, x20-x25, lr, sp preserved.
 +	 * Lives until arm_vm_init() replaces the bootstrap tables.
 +	 */
@@ -21,7 +24,7 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 +	mov		x6, #((0x48000000 >> ARM_TT_L2_SHIFT) << TTE_SHIFT)	// &L2[0x24] = +0x120
 +	add		x5, x5, x6
 +	MOV64	x6, 0x48000000					// block base, PA = VA
-+	MOV64	x7, (ARM_TTE_VALID | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_AP(1) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX)
++	MOV64	x7, (ARM_TTE_VALID | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_AP(0) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX)
 +	orr		x6, x6, x7
 +	str		x6, [x5]						// install pmsg V=P block
 +#endif
