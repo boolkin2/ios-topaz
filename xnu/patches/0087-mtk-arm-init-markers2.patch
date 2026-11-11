@@ -1,0 +1,74 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -519,18 +519,38 @@
+ 
+ 	rtclock_early_init();
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','0'), 0);
++#endif
++
+ 	kernel_debug_string_early("kernel_startup_bootstrap");
+ 	kernel_startup_bootstrap();
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','1'), 0);
++#endif
++
+ 	/*
+ 	 * Initialize the timer callout world
+ 	 */
+ 	timer_call_init();
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','2'), 0);
++#endif
++
+ 	cpu_init();
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','3'), 0);
++#endif
++
+ 	processor_bootstrap();
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','4'), 0);
++#endif
++
+ 	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
+ 		xmaxmem = (uint64_t) maxmem * (1024 * 1024);
+ 	} else if (PE_get_default("hw.memsize", &memsize, sizeof(memsize))) {
+@@ -539,6 +559,10 @@
+ 		xmaxmem = 0;
+ 	}
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','5'), (unsigned int)xmaxmem);
++#endif
++
+ #if SCHED_HYGIENE_DEBUG
+ 	{
+ 		int wdt_boot_arg = 0;
+@@ -565,6 +589,10 @@
+ 
+ 	nanoseconds_to_absolutetime(XCALL_ACK_TIMEOUT_NS, &xcall_ack_timeout_abstime);
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','6'), 0);
++#endif
++
+ #if HAS_BP_RET
+ 	PE_parse_boot_argn("bpret", &bp_ret, sizeof(bp_ret));
+ 	set_bp_ret(); // Apply branch predictor retention settings to boot CPU
+@@ -572,6 +600,10 @@
+ 
+ 	PE_parse_boot_argn("immediate_NMI", &force_immediate_debug_halt, sizeof(force_immediate_debug_halt));
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','1','0','7'), 0);
++#endif
++
+ #if __ARM_PAN_AVAILABLE__
+ 	__builtin_arm_wsr("pan", 1);
+ #endif  /* __ARM_PAN_AVAILABLE__ */
