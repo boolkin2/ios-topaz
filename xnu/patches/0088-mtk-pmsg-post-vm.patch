@@ -1,0 +1,207 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c	2026-11-11 23:37:48.732798000 +0500
++++ b/osfmk/arm64/arm_vm_init.c	2026-11-11 23:40:00.793387900 +0500
+@@ -51,6 +51,14 @@
+ 
+ #include <san/kasan.h>
+ 
++#if defined(SWEET)
++/* Patch 0088: post-table-switch pmsg marker (defined in arm_init.c). */
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++#define SWEET_TAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++#endif /* SWEET */
++
+ #if __ARM_KERNEL_PROTECT__
+ /*
+  * If we want to support __ARM_KERNEL_PROTECT__, we need a sufficient amount of
+@@ -2153,6 +2161,38 @@
+ 	arm_set_user_tbi();
+ 
+ 	arm_vm_physmap_init(args);
++#if defined(SWEET)
++	/*
++	 * Patch 0088: re-install the pmsg debug alias into the NEW kernel page
++	 * tables BEFORE the TTBR switch below, so it survives
++	 * set_mmu_ttb(invalid_ttep) destroying the bootstrap V=P alias (0085).
++	 *
++	 * KVA 0xFFFFFE0200000000 = VM_MIN_KERNEL_ADDRESS + 8GB -> L1[0x7E0]
++	 * (the kernel static region; its L2 page is already allocated by
++	 * init_ptpages() above and shared with LOW_GLOBAL_BASE_ADDRESS),
++	 * L2 index 0x100. This slot sits far above the kernel image / boot data
++	 * (first ~256MB, L2 0..7) and far below KERNEL_PMAP_HEAP_RANGE_START
++	 * (VM_MIN+64GB, L1[0x7E1]), so neither arm_vm_prot_init() nor pmap ever
++	 * maps it. One 32MB Device-nGnRnE block, PA 0x48000000..0x49FFFFFF,
++	 * AP_RWNA (PAN-safe; XNU AP convention AP_RWNA==0), AF, outer-shareable,
++	 * XN+PXN. pmsg zone PA 0x48130000 -> KVA 0xFFFFFE0200130000, used by
++	 * sweet_late_mark(). cpu_tte is still the bootstrap-KVA pointer here
++	 * (kva_active==FALSE), so phystokv() resolves the L2 page through the
++	 * live bootstrap map; the entry goes live when TTBR1 switches below.
++	 */
++	{
++		vm_offset_t sweet_va = 0xFFFFFE0200000000ULL;
++		tt_entry_t *sweet_l1 = cpu_tte + L1_TABLE_INDEX(sweet_va);
++		tt_entry_t *sweet_l2 = (tt_entry_t *)phystokv((*sweet_l1) & ARM_TTE_TABLE_MASK);
++		sweet_l2[L2_TABLE_INDEX(sweet_va)] =
++		    0x48000000ULL | ARM_TTE_VALID | ARM_TTE_BLOCK_AF |
++		    ARM_TTE_BLOCK_AP(AP_RWNA) |
++		    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) |
++		    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
++		    ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX;
++		__asm__ volatile("dsb ish" ::: "memory");
++	}
++#endif /* SWEET */
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ 	ml_enable_monitor();
+@@ -2165,6 +2205,11 @@
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
+ 
++#if defined(SWEET)
++	/* V000: TTBR0 invalidated, TTBR1=cpu_tte active; pmsg alias survived. */
++	sweet_late_mark(SWEET_TAG('V','0','0','0'), (unsigned int)cpu_ttep);
++#endif
++
+ 	// From here on out, we're off the bootstrap translation tables.
+ 
+ 
+@@ -2212,6 +2257,11 @@
+ 		flush_mmu_tlb();
+ 	}
+ 
++#if defined(SWEET)
++	/* V001: arm_vm_auxkc_init() done (a likely fault site past the switch). */
++	sweet_late_mark(SWEET_TAG('V','0','0','1'), 0);
++#endif
++
+ 	sane_size = mem_size - (avail_start - gPhysBase);
+ 	max_mem = mem_size;
+ 	vm_kernel_slid_base = segLOWESTTEXT;
+@@ -2258,6 +2308,11 @@
+ #endif
+ 	pmap_bootstrap(dynamic_memory_begin);
+ 
++#if defined(SWEET)
++	/* V002: pmap_bootstrap() returned; kernel pmap is live. */
++	sweet_late_mark(SWEET_TAG('V','0','0','2'), (unsigned int)dynamic_memory_begin);
++#endif
++
+ 	disable_preemption();
+ 
+ 	/*
+@@ -2382,6 +2437,10 @@
+ #endif
+ 	first_avail = avail_start;
+ 	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
++#if defined(SWEET)
++	/* V003: arm_vm_init() complete, about to return to arm_init(). */
++	sweet_late_mark(SWEET_TAG('V','0','0','3'), (unsigned int)avail_start);
++#endif
+ 	enable_preemption();
+ }
+ 
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c	2026-11-11 23:37:57.574799400 +0500
++++ b/osfmk/arm/arm_init.c	2026-11-11 23:41:00.548650800 +0500
+@@ -348,6 +348,40 @@
+ 	__asm__ volatile("dc civac, %0" :: "r"(base) : "memory");
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ }
++
++/*
++ * Post-arm_vm_init pmsg marker (patch 0088). Once arm_vm_init() calls
++ * set_mmu_ttb(invalid_ttep) the bootstrap V=P alias at 0x48130000 is gone.
++ * arm_vm_init() re-installs the pmsg block into the new kernel page tables
++ * at KVA 0xFFFFFE0200000000 (PA 0x48000000), so from the table switch onward
++ * the zone lives at 0xFFFFFE0200130000. Identical record format to
++ * sweet_early_mark; the physical zone (and its size/seq) is the same, so
++ * markers stay contiguous across the switch. Non-static: arm_vm_init.c
++ * calls it immediately after the switch.
++ */
++#define SWEET_PMSG_KVA 0xFFFFFE0200130000UL
++void
++sweet_late_mark(unsigned int tag, unsigned int val)
++{
++	volatile unsigned int *base = (volatile unsigned int *)SWEET_PMSG_KVA;
++	unsigned int size = base[2];
++	if (size > 0x40000u - 32u) {
++		return;
++	}
++	volatile unsigned int *r =
++	    (volatile unsigned int *)(SWEET_PMSG_KVA + 12u + size);
++	r[4] = val;
++	r[0] = tag;
++	r[1] = size;
++	r[2] = 1u;
++	r[3] = val;
++	__asm__ volatile("dc civac, %0" :: "r"(r) : "memory");
++	__asm__ volatile("dc civac, %0" :: "r"((unsigned long)r + 64u) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++	base[2] = size + 20u;
++	__asm__ volatile("dc civac, %0" :: "r"(base) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++}
+ #endif /* SWEET */
+ 
+ /*
+@@ -613,6 +647,11 @@
+ #endif
+ 	arm_vm_init(xmaxmem, args);
+ 
++#if defined(SWEET)
++	/* D000: arm_vm_init() returned to arm_init(). */
++	sweet_late_mark(SWEET_EARLY_TAG('D','0','0','0'), 0);
++#endif
++
+ 	if (debug_boot_arg) {
+ 		patch_low_glo();
+ 	}
+@@ -628,6 +667,11 @@
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+ 	kprintf("kprintf initialized\n");
+ 
++#if defined(SWEET)
++	/* D001: kprintf subsystem initialized. */
++	sweet_late_mark(SWEET_EARLY_TAG('D','0','0','1'), 0);
++#endif
++
+ 	serialmode = 0;
+ 	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+ 		/* Do we want a serial keyboard and/or console? */
+@@ -671,6 +715,11 @@
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
+ 
++#if defined(SWEET)
++	/* D002: PE_init_printf() done (console/printf path alive). */
++	sweet_late_mark(SWEET_EARLY_TAG('D','0','0','2'), 0);
++#endif
++
+ #if __arm64__
+ #if DEBUG
+ 	dump_kva_space();
+@@ -681,6 +730,11 @@
+ 
+ 	PE_init_platform(TRUE, &BootCpuData);
+ 
++#if defined(SWEET)
++	/* D003: PE_init_platform(TRUE) done (platform expert fully up). */
++	sweet_late_mark(SWEET_EARLY_TAG('D','0','0','3'), 0);
++#endif
++
+ #if __arm64__
+ 	extern bool cpu_config_correct;
+ 	if (!cpu_config_correct) {
+@@ -745,6 +799,10 @@
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
++#if defined(SWEET)
++	/* D004: about to enter machine_startup() (BSD/IOKit init). */
++	sweet_late_mark(SWEET_EARLY_TAG('D','0','0','4'), 0);
++#endif
+ 	machine_startup(args);
+ }
+ 
