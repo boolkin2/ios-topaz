@@ -1,0 +1,126 @@
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -315,6 +315,41 @@
+ #endif /* defined(HAS_APPLE_PAC) */
+ }
+ 
++#if defined(SWEET)
++/*
++ * Early-boot pmsg marker. Appends one record to the ramoops pmsg zone at
++ * VA 0x48130000, reachable through the V=P alias installed by start.s
++ * (live until arm_vm_init replaces the bootstrap tables). Same record
++ * format as the shim and SWEET_PMSG_MARK: 16B header {tag,seq,n,xor} + 1
++ * data word. No locks, no allocation, safe before console/cpu_data exist.
++ */
++#define SWEET_EARLY_TAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++static void
++sweet_early_mark(unsigned int tag, unsigned int val)
++{
++	volatile unsigned int *base = (volatile unsigned int *)0x48130000UL;
++	unsigned int size = base[2];
++	if (size > 0x40000u - 32u) {
++		return;
++	}
++	volatile unsigned int *r =
++	    (volatile unsigned int *)(0x48130000UL + 12u + size);
++	r[4] = val;
++	r[0] = tag;
++	r[1] = size;
++	r[2] = 1u;
++	r[3] = val;
++	__asm__ volatile("dc civac, %0" :: "r"(r) : "memory");
++	__asm__ volatile("dc civac, %0" :: "r"((unsigned long)r + 64u) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++	base[2] = size + 20u;
++	__asm__ volatile("dc civac, %0" :: "r"(base) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++#endif /* SWEET */
++
+ /*
+  *	Routine:	arm_setup_pre_sign
+  *	Function:	Perform HW initialization that must happen ahead of the first PAC sign
+@@ -347,14 +382,26 @@
+ 	unsigned int dt_entry_size = 0;
+ 
+ 	arm_setup_pre_sign();
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','0'), 0);
++#endif
++
+ 
+ 	arm_slide_rebase_and_sign_image();
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','1'), 0);
++#endif
++
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
+ 	BootArgs = args = &const_boot_args;
+ 
+ 	cpu_data_init(&BootCpuData);
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','2'), 0);
++#endif
++
+ #if defined(HAS_APPLE_PAC)
+ 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
+ 	BootCpuData.rop_key = ml_default_rop_pid();
+@@ -362,6 +409,10 @@
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','3'), 0);
++#endif
++
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
+@@ -423,6 +474,10 @@
+ #endif
+ 
+ 	ml_parse_cpu_topology();
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','4'), 0);
++#endif
++
+ 
+ 
+ 	master_cpu = ml_get_boot_cpu_number();
+@@ -444,6 +499,10 @@
+ 	thread->machine.CpuDatap = &BootCpuData;
+ 	thread->machine.pcpu_data_base = (vm_offset_t)0;
+ 	machine_set_current_thread(thread);
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','5'), 0);
++#endif
++
+ 
+ 	/*
+ 	 * Preemption is enabled for this thread so that it can lock mutexes without
+@@ -453,6 +512,10 @@
+ 	 */
+ 	thread->machine.preemption_count = 0;
+ 	cpu_bootstrap();
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','6'), 0);
++#endif
++
+ 
+ 	rtclock_early_init();
+ 
+@@ -513,6 +576,9 @@
+ 	__builtin_arm_wsr("pan", 1);
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
++#if defined(SWEET)
++	sweet_early_mark(SWEET_EARLY_TAG('C','0','0','7'), (unsigned int)xmaxmem);
++#endif
+ 	arm_vm_init(xmaxmem, args);
+ 
+ 	if (debug_boot_arg) {
