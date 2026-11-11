@@ -1,0 +1,57 @@
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -670,6 +670,27 @@
+ 	/* X001: bootstrap page tables built; the last marker with the MMU off. */
+ 	SWEET_PMSG_MARK #0x3058, #0x3130, #0		// "X001", value 0
+ #endif
++#if defined(SWEET)
++	/*
++	 * Keep pmsg reachable after the MMU is enabled: add one Device-nGnRnE
++	 * V=P block covering 0x48000000..0x49ffffff to the existing V=P L2 page
++	 * (page 2 = x25 + 2*PGBYTES). L1[0] already points at that page because
++	 * the kernel (0xa0000000) shares it; pmsg L2 index 0x24 does not clash
++	 * with the kernel's 0x50..0x5c. MAIR attr3 = 0x00 (Device-nGnRnE) so the
++	 * block is never speculatively fetched and needs no cache maintenance
++	 * beyond the dc civac already in SWEET_PMSG_MARK. EL1-only, XN/PXN.
++	 * Clobbers x5-x7 only; x0-x4, x14-x15, x20-x25, lr, sp preserved.
++	 * Lives until arm_vm_init() replaces the bootstrap tables.
++	 */
++	add		x5, x25, #0x8, lsl #12			// x5 = V=P L2 page (2 * 16K PGBYTES)
++	mov		x6, #((0x48000000 >> ARM_TT_L2_SHIFT) << TTE_SHIFT)	// &L2[0x24] = +0x120
++	add		x5, x5, x6
++	MOV64	x6, 0x48000000					// block base, PA = VA
++	MOV64	x7, (ARM_TTE_VALID | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_AP(1) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX)
++	orr		x6, x6, x7
++	str		x6, [x5]						// install pmsg V=P block
++#endif
++
+ 
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+@@ -806,6 +827,13 @@
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
++#if defined(SWEET)
++	/* X002: MMU on; pmsg reachable via the V=P alias installed above.
++	 * Record SCTLR_EL1 low word so the parser can confirm the M bit. */
++	mrs		x9, SCTLR_EL1
++	SWEET_PMSG_MARK #0x3058, #0x3230, w9		// "X002", SCTLR_EL1 lo
++#endif
++
+ 
+ #if !VMAPPLE && !defined(SWEET)
+ 	MOV64   x1, SCTLR_EL1_DEFAULT
+@@ -869,6 +897,11 @@
+ 	mov	lr, x21
+ #endif
+ 
++#if defined(SWEET)
++	/* X003: about to enter arm_init(); record boot_args KVA low word. */
++	SWEET_PMSG_MARK #0x3058, #0x3330, w0		// "X003", boot_args KVA lo
++#endif
++
+ 	// Return to arm_init()
+ 	ret
+ 
