@@ -1,0 +1,34 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index 4efeb71..c5c11f1 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2229,14 +2229,21 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	{
+ 		vm_offset_t sweet_va = 0xFFFFFE0200000000ULL;
+ 		tt_entry_t *sweet_l1 = cpu_tte + L1_TABLE_INDEX(sweet_va);
+-		tt_entry_t *sweet_l2 = (tt_entry_t *)phystokv((*sweet_l1) & ARM_TTE_TABLE_MASK);
+-		sweet_l2[L2_TABLE_INDEX(sweet_va)] =
+-		    0x48000000ULL | ARM_TTE_VALID | ARM_TTE_BLOCK_AF |
+-		    ARM_TTE_BLOCK_AP(AP_RWNA) |
+-		    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) |
+-		    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
+-		    ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX;
+-		__asm__ volatile("dsb ish" ::: "memory");
++		tt_entry_t sweet_l1e = *sweet_l1;
++		/* Patch 0090: W008 = значение L1-записи. Если это не таблица —
++		 * НЕ пишем (иначе fault на невыделенном L2). W009 = указатель L2. */
++		sweet_vm_mark(SWEET_TAG('W','0','0','8'), (unsigned int)sweet_l1e);
++		if ((sweet_l1e & ARM_TTE_TYPE_MASK) == ARM_TTE_TYPE_TABLE) {
++			tt_entry_t *sweet_l2 = (tt_entry_t *)phystokv(sweet_l1e & ARM_TTE_TABLE_MASK);
++			sweet_vm_mark(SWEET_TAG('W','0','0','9'), (unsigned int)(vm_offset_t)sweet_l2);
++			sweet_l2[L2_TABLE_INDEX(sweet_va)] =
++			    0x48000000ULL | ARM_TTE_VALID | ARM_TTE_BLOCK_AF |
++			    ARM_TTE_BLOCK_AP(AP_RWNA) |
++			    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) |
++			    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
++			    ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX;
++			__asm__ volatile("dsb ish" ::: "memory");
++		}
+ 	}
+ #endif /* SWEET */
+ #if defined(SWEET)
