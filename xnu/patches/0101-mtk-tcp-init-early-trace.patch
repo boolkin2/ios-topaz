@@ -1,0 +1,34 @@
+diff --git a/bsd/netinet/tcp_subr.c b/bsd/netinet/tcp_subr.c
+index c2a52a2..14e0d13 100644
+--- a/bsd/netinet/tcp_subr.c
++++ b/bsd/netinet/tcp_subr.c
+@@ -514,6 +514,9 @@ tcp_init(struct protosw *pp, struct domain *dp)
+ 		return;
+ 	}
+ 	tcp_initialized = 1;
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','0'), 0);  /* entry */
++#endif
+ 
+ #if DEBUG || DEVELOPMENT
+ 	(void) PE_parse_boot_argn("tcp_rxt_seg_max", &tcp_rxt_seg_max,
+@@ -530,6 +533,9 @@ tcp_init(struct protosw *pp, struct domain *dp)
+ 
+ 	microuptime(&tcp_uptime);
+ 	read_frandom(&tcp_now, sizeof(tcp_now));
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','F'), 0);  /* after read_frandom */
++#endif
+ 
+ 	/* Starts tcp internal clock at a random value */
+ 	tcp_now = tcp_now & 0x3fffffff;
+@@ -540,6 +546,9 @@ tcp_init(struct protosw *pp, struct domain *dp)
+ 	    (uint32_t)(tcp_uptime.tv_usec + (tcp_uptime.tv_sec * USEC_PER_SEC));
+ 	SYSCTL_SKMEM_UPDATE_FIELD(tcp.microuptime_init, tcp_microuptime_init);
+ 	SYSCTL_SKMEM_UPDATE_FIELD(tcp.now_init, tcp_now_init);
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','A'), 0);  /* before tfo_init */
++#endif
+ 
+ 	tcp_tfo_init();
+ #if defined(SWEET)
