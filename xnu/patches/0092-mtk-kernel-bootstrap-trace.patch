@@ -1,0 +1,70 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index a80f578..fc61d22 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -57,6 +57,9 @@ extern void sweet_late_mark(unsigned int tag, unsigned int val);
+ #define SWEET_TAG(a, b, c, d) \
+ 	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
+ 	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++/* Patch 0092: set to 1 once the pmsg KVA alias is live (post-TTBR-switch), so
++ * startup.c bootstrap-phase tracing can safely call sweet_late_mark. */
++unsigned int sweet_pmsg_kva_live = 0;
+ /* Patch 0089: pre-switch marker via the bootstrap V=P alias (0x48130000).
+  * sweet_early_mark is static in arm_init.c, so duplicate the record logic here
+  * to localize the fault inside arm_vm_init (W000..W007). Same format. */
+@@ -2268,6 +2271,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 
+ #if defined(SWEET)
+ 	/* V000: TTBR0 invalidated, TTBR1=cpu_tte active; pmsg alias survived. */
++	sweet_pmsg_kva_live = 1;
+ 	sweet_late_mark(SWEET_TAG('V','0','0','0'), (unsigned int)cpu_ttep);
+ #endif
+ 
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index bec97fb..01b92b4 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -218,9 +218,33 @@ extern int serverperfmode;
+ 
+ TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
+ 
++#if defined(SWEET)
++/* Patch 0092: trace each kernel-bootstrap phase to pmsg. Tag = first 4 chars of
++ * the phase name, val = sequence. Only after the pmsg KVA alias is live
++ * (sweet_pmsg_kva_live set at V000); pre-switch calls are skipped. */
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++extern unsigned int sweet_pmsg_kva_live;
++static unsigned int sweet_kbt_seq = 0;
++static inline void
++sweet_kbt_trace(const char *message)
++{
++	if (!sweet_pmsg_kva_live || message == NULL) {
++		return;
++	}
++	unsigned int tag = (unsigned int)(unsigned char)message[0] |
++	    ((unsigned int)(unsigned char)message[1] << 8) |
++	    ((unsigned int)(unsigned char)message[2] << 16) |
++	    ((unsigned int)(unsigned char)message[3] << 24);
++	sweet_late_mark(tag, sweet_kbt_seq++);
++}
++#endif /* SWEET */
++
+ static inline void
+ kernel_bootstrap_log(const char *message)
+ {
++#if defined(SWEET)
++	sweet_kbt_trace(message);
++#endif
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap: %s\n", message);
+@@ -231,6 +255,9 @@ kernel_bootstrap_log(const char *message)
+ static inline void
+ kernel_bootstrap_thread_log(const char *message)
+ {
++#if defined(SWEET)
++	sweet_kbt_trace(message);
++#endif
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap_thread: %s\n", message);
