@@ -1,0 +1,76 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 6ccd9a4..b5538e1 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -762,9 +762,18 @@ extern void sweet_late_mark(unsigned int tag, unsigned int val);
+ 	socketinit();
+ 	bsd_init_kprintf("calling domaininit\n");
+ 	domaininit();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_BSD_TAG('D','7','6','4'), 0);
++#endif
+ 	iptap_init();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_BSD_TAG('D','7','6','5'), 0);
++#endif
+ #if FLOW_DIVERT
+ 	flow_divert_init();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_BSD_TAG('D','7','6','7'), 0);
++#endif
+ #endif  /* FLOW_DIVERT */
+ #endif /* SOCKETS */
+ #if SKYWALK
+diff --git a/bsd/kern/uipc_domain.c b/bsd/kern/uipc_domain.c
+index de4c365..9aa8aac 100644
+--- a/bsd/kern/uipc_domain.c
++++ b/bsd/kern/uipc_domain.c
+@@ -708,11 +708,22 @@ domain_timeout(void *arg)
+ 	lck_mtx_unlock(&domain_timeout_mtx);
+ }
+ 
++#if defined(SWEET)
++/* Patch 0098: localize the domaininit stall (per-domain markers). */
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++#define SWEET_DOM_TAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++#endif
++
+ void
+ domaininit(void)
+ {
+ 	struct domain *dp;
+ 	domain_guard_t guard;
++#if defined(SWEET)
++	unsigned int sweet_dom_n = 0;
++#endif
+ 
+ 	eventhandler_lists_ctxt_init(&protoctl_evhdlr_ctxt);
+ 
+@@ -737,13 +748,23 @@ domaininit(void)
+ 	attach_domain(&ndrvdomain_s);
+ 	attach_domain(&vsockdomain_s);
+ 	attach_domain(&routedomain_s);  /* must be last domain */
++#if defined(SWEET)
++	sweet_late_mark(SWEET_DOM_TAG('D','O','M','A'), 0);  /* all attached */
++#endif
+ 
+ 	/*
+ 	 * Now ask them all to init (XXX including the routing domain,
+ 	 * see above)
+ 	 */
+-	TAILQ_FOREACH(dp, &domains, dom_entry)
+-	init_domain(dp);
++	TAILQ_FOREACH(dp, &domains, dom_entry) {
++#if defined(SWEET)
++		sweet_late_mark(SWEET_DOM_TAG('D','O','M','I'), sweet_dom_n++);
++#endif
++		init_domain(dp);
++	}
++#if defined(SWEET)
++	sweet_late_mark(SWEET_DOM_TAG('D','O','M','D'), sweet_dom_n);  /* all inited */
++#endif
+ 
+ 	domain_guard_release(guard);
+ }
