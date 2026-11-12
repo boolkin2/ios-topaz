@@ -1,0 +1,95 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index b5538e1..3a4566d 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1133,6 +1133,10 @@ setconf(void)
+ 	kern_return_t   err;
+ 
+ 	err = IOFindBSDRoot(rootdevice, sizeof(rootdevice), &rootdev, &flags);
++#if defined(SWEET)
++	sweet_late_mark(SWEET_BSD_TAG('S','C','0','1'), (unsigned int)err);
++	sweet_late_mark(SWEET_BSD_TAG('S','C','0','2'), (unsigned int)rootdev);
++#endif
+ 	if (err) {
+ 		printf("setconf: IOFindBSDRoot returned an error (%d);"
+ 		    "setting rootdevice to 'sd0a'.\n", err);     /* XXX DEBUG TEMP */
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index 5219fb0..ba51b2c 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -65,6 +65,10 @@ extern dev_t mdevlookup(int devid);
+ extern void mdevremoveall(void);
+ extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
+ extern void di_root_ramfile(IORegistryEntry * entry);
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++#define SWEET_RD_TAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
+ extern int IODTGetDefault(const char *key, void *infoAddr, unsigned int infoSize);
+ extern boolean_t cpuid_vmm_present(void);
+ 
+@@ -678,6 +682,8 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 
+ 	int xchar, dchar;
+ 
++	sweet_late_mark(SWEET_RD_TAG('R','D','0','0'), 0);
++
+ 	// stall here for anyone matching on the IOBSD resource to finish (filesystems)
+ 	matching = IOService::serviceMatching(gIOResourcesKey);
+ 	assert(matching);
+@@ -706,6 +712,7 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	    && !PE_parse_boot_argn("rootdev", rdBootVar, kMaxBootVar )) {
+ 		rdBootVar[0] = 0;
+ 	}
++	sweet_late_mark(SWEET_RD_TAG('R','D','0','1'), (unsigned char)rdBootVar[0]);
+ 
+ 	if ((regEntry = IORegistryEntry::fromPath( "/chosen", gIODTPlane ))) {
+ 		do {
+@@ -750,19 +757,29 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	if (!didRam) {                                                                                           /* Have we already build this ram disk? */
+ 		didRam = 1;                                                                                             /* Remember we did this */
+ 		if ((regEntry = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane ))) {        /* Find the map node */
++			sweet_late_mark(SWEET_RD_TAG('R','D','0','2'), 1);
+ 			data = (OSData *)regEntry->getProperty("RAMDisk");      /* Find the ram disk, if there */
+ 			if (data) {                                                                                      /* We found one */
+ 				uintptr_t *ramdParms;
+ 				ramdParms = (uintptr_t *)data->getBytesNoCopy();        /* Point to the ram disk base and size */
++				sweet_late_mark(SWEET_RD_TAG('R','D','0','3'), (unsigned int)ramdParms[0]);
++				sweet_late_mark(SWEET_RD_TAG('R','D','0','4'), (unsigned int)ramdParms[1]);
+ #if __LP64__
+ #define MAX_PHYS_RAM    (((uint64_t)UINT_MAX) << 12)
+ 				if (ramdParms[1] > MAX_PHYS_RAM) {
+ 					panic("ramdisk params");
+ 				}
+ #endif /* __LP64__ */
+-				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
++				{
++					dev_t mdret = mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
++					sweet_late_mark(SWEET_RD_TAG('R','D','0','5'), (unsigned int)mdret);
++				}
++			} else {
++				sweet_late_mark(SWEET_RD_TAG('R','D','0','3'), 0);
+ 			}
+ 			regEntry->release();                                                            /* Toss the entry */
++		} else {
++			sweet_late_mark(SWEET_RD_TAG('R','D','0','2'), 2);
+ 		}
+ 	}
+ 
+@@ -786,6 +803,8 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 		if (xchar >= 0) {                                                                                /* Do we have a valid memory device name? */
+ 			OSSafeReleaseNULL(matching);
+ 			*root = mdevlookup(xchar);                                                      /* Find the device number */
++			sweet_late_mark(SWEET_RD_TAG('R','D','0','6'), (unsigned int)xchar);
++			sweet_late_mark(SWEET_RD_TAG('R','D','0','7'), (unsigned int)*root);
+ 			if (*root >= 0) {                                                                        /* Did we find one? */
+ 				rootName[0] = 'm';                                                              /* Build root name */
+ 				rootName[1] = 'd';                                                              /* Build root name */
+@@ -805,6 +824,7 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 
+ 				goto iofrootx;                                                                  /* Join common exit... */
+ 			}
++			sweet_late_mark(SWEET_RD_TAG('R','D','0','8'), 0);
+ 			panic("IOFindBSDRoot: specified root memory device, %s, has not been configured", rdBootVar); /* Not there */
+ 		}
+ 	}
