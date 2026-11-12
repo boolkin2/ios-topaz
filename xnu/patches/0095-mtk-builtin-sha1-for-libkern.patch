@@ -1,0 +1,62 @@
+diff --git a/libkern/crypto/corecrypto_sha1.c b/libkern/crypto/corecrypto_sha1.c
+index 5fd982b..eea7635 100644
+--- a/libkern/crypto/corecrypto_sha1.c
++++ b/libkern/crypto/corecrypto_sha1.c
+@@ -3,6 +3,22 @@
+ #include <kern/debug.h>
+ #include <corecrypto/ccdigest.h>
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/*
++ * SWEET has no corecrypto kext, so g_crypto_funcs stays NULL (same as the
++ * SHA-256 fix in patch 0023). generatePlatformUUID() calls SHA1 during
++ * ConfigureIOKit; use XNU's built-in LibTomCrypt SHA-1 provider directly.
++ */
++#include <corecrypto/ccsha1.h>
++#define SHA1_DI()                     (&ccsha1_ltc_di)
++#define SHA1_INIT(di, ctx)            ccdigest_init(di, ctx)
++#define SHA1_UPDATE(di, ctx, len, d)  ccdigest_update(di, ctx, len, d)
++#else
++#define SHA1_DI()                     (g_crypto_funcs->ccsha1_di)
++#define SHA1_INIT(di, ctx)            g_crypto_funcs->ccdigest_init_fn(di, ctx)
++#define SHA1_UPDATE(di, ctx, len, d)  g_crypto_funcs->ccdigest_update_fn(di, ctx, len, d)
++#endif
++
+ 
+ static uint64_t
+ getCount(SHA1_CTX *ctx)
+@@ -40,10 +56,10 @@ SHA1ToDi(const struct ccdigest_info *di, SHA1_CTX *sha1_ctx, struct ccdigest_ctx
+ void
+ SHA1Init(SHA1_CTX *ctx)
+ {
+-	const struct ccdigest_info *di = g_crypto_funcs->ccsha1_di;
++	const struct ccdigest_info *di = SHA1_DI();
+ 	ccdigest_di_decl(di, di_ctx);
+ 
+-	g_crypto_funcs->ccdigest_init_fn(di, di_ctx);
++	SHA1_INIT(di, di_ctx);
+ 
+ 	DiToSHA1(di, di_ctx, ctx);
+ }
+@@ -51,18 +67,18 @@ SHA1Init(SHA1_CTX *ctx)
+ void
+ SHA1Update(SHA1_CTX *ctx, const void *data, size_t len)
+ {
+-	const struct ccdigest_info *di = g_crypto_funcs->ccsha1_di;
++	const struct ccdigest_info *di = SHA1_DI();
+ 	ccdigest_di_decl(di, di_ctx);
+ 
+ 	SHA1ToDi(di, ctx, di_ctx);
+-	g_crypto_funcs->ccdigest_update_fn(di, di_ctx, len, data);
++	SHA1_UPDATE(di, di_ctx, len, data);
+ 	DiToSHA1(di, di_ctx, ctx);
+ }
+ 
+ void
+ SHA1Final(void *digest, SHA1_CTX *ctx)
+ {
+-	const struct ccdigest_info *di = g_crypto_funcs->ccsha1_di;
++	const struct ccdigest_info *di = SHA1_DI();
+ 	ccdigest_di_decl(di, di_ctx);
+ 
+ 	SHA1ToDi(di, ctx, di_ctx);
