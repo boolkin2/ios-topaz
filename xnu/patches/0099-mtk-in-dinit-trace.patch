@@ -1,0 +1,38 @@
+diff --git a/bsd/netinet/in_proto.c b/bsd/netinet/in_proto.c
+index 8501b82..1b1c33e 100644
+--- a/bsd/netinet/in_proto.c
++++ b/bsd/netinet/in_proto.c
+@@ -282,6 +282,14 @@ struct domain inetdomain_s = {
+ 	.dom_protohdrlen =      sizeof(struct tcpiphdr),
+ };
+ 
++#if defined(SWEET)
++/* Patch 0099: localize the in_dinit stall (per-protocol markers). */
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++#define SWEET_IN_TAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++#endif
++
+ /* Initialize the PF_INET domain, and add in the pre-defined protos */
+ void
+ in_dinit(struct domain *dp)
+@@ -308,9 +316,18 @@ in_dinit(struct domain *dp)
+ 	for (i = 0, pr = &inetsw[0]; i < in_proto_count; i++, pr++) {
+ 		net_add_proto(pr, dp, 0);
+ 	}
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IN_TAG('I','N','A','D'), i);  /* all added */
++#endif
+ 	for (i = 0, pr = &inetsw[0]; i < in_proto_count; i++, pr++) {
++#if defined(SWEET)
++		sweet_late_mark(SWEET_IN_TAG('I','N','I','T'), i);  /* before init proto i */
++#endif
+ 		net_init_proto(pr, dp);
+ 	}
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IN_TAG('I','N','D','N'), i);  /* all inited */
++#endif
+ 
+ 	inet_domain_mutex = dp->dom_mtx;
+ 
