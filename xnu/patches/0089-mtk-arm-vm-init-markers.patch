@@ -1,0 +1,116 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index 17e4f50..4efeb71 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -57,6 +57,31 @@ extern void sweet_late_mark(unsigned int tag, unsigned int val);
+ #define SWEET_TAG(a, b, c, d) \
+ 	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
+ 	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++/* Patch 0089: pre-switch marker via the bootstrap V=P alias (0x48130000).
++ * sweet_early_mark is static in arm_init.c, so duplicate the record logic here
++ * to localize the fault inside arm_vm_init (W000..W007). Same format. */
++static void
++sweet_vm_mark(unsigned int tag, unsigned int val)
++{
++	volatile unsigned int *base = (volatile unsigned int *)0x48130000UL;
++	unsigned int size = base[2];
++	if (size > 0x40000u - 32u) {
++		return;
++	}
++	volatile unsigned int *r =
++	    (volatile unsigned int *)(0x48130000UL + 12u + size);
++	r[4] = val;
++	r[0] = tag;
++	r[1] = size;
++	r[2] = 1u;
++	r[3] = val;
++	__asm__ volatile("dc civac, %0" :: "r"(r) : "memory");
++	__asm__ volatile("dc civac, %0" :: "r"((unsigned long)r + 64u) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++	base[2] = size + 20u;
++	__asm__ volatile("dc civac, %0" :: "r"(base) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++}
+ #endif /* SWEET */
+ 
+ #if __ARM_KERNEL_PROTECT__
+@@ -1890,6 +1915,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	assert(physmap_slide < ARM64_PHYSMAP_SLIDE_RANGE);
+ 
+ 	physmap_base += physmap_slide;
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','0'), (unsigned int)physmap_base);
++#endif
+ 
+ #if XNU_MONITOR
+ 	physmap_base = ROUND_TWIG(physmap_base);
+@@ -1931,6 +1959,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 		panic("Unsupported memory configuration %lx", mem_size);
+ 	}
+ 
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','1'), (unsigned int)dynamic_memory_begin);
++#endif
+ 	boot_tte = (tt_entry_t *)&bootstrap_pagetables;
+ 	boot_ttep = kvtophys((vm_offset_t)boot_tte);
+ 
+@@ -1945,6 +1976,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 		panic("BOOTSTRAP_TABLE_SIZE too small for memory config");
+ 	}
+ #endif
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','2'), (unsigned int)mem_size);
++#endif
+ 
+ 	/*
+ 	 *  TTBR0 L1, TTBR0 L2 - 1:1 bootstrap mapping.
+@@ -1973,6 +2007,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	 */
+ 	cpu_tte = (tt_entry_t *)alloc_ptpage(TRUE);
+ 	cpu_ttep = kvtophys((vm_offset_t)cpu_tte);
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','3'), (unsigned int)cpu_ttep);
++#endif
+ 	bzero(cpu_tte, ARM_PGBYTES);
+ 	avail_end = gPhysBase + mem_size;
+ 	assert(!(avail_end & PAGE_MASK));
+@@ -2115,6 +2152,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
+ 
+ 	arm_vm_prot_init(args);
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','4'), 0);
++#endif
+ 
+ 	/*
+ 	 * Initialize the page tables for the low globals:
+@@ -2146,6 +2186,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	 */
+ 	init_ptpages(cpu_tte, dynamic_memory_begin, VM_MAX_KERNEL_ADDRESS, TRUE, ARM_DYNAMIC_TABLE_XN | ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
+ #endif
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','5'), 0);
++#endif
+ 
+ #if KASAN
+ 	/* record the extent of the physmap */
+@@ -2161,6 +2204,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	arm_set_user_tbi();
+ 
+ 	arm_vm_physmap_init(args);
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','6'), 0);
++#endif
+ #if defined(SWEET)
+ 	/*
+ 	 * Patch 0088: re-install the pmsg debug alias into the NEW kernel page
+@@ -2193,6 +2239,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 		__asm__ volatile("dsb ish" ::: "memory");
+ 	}
+ #endif /* SWEET */
++#if defined(SWEET)
++	sweet_vm_mark(SWEET_TAG('W','0','0','7'), 0);
++#endif
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ 	ml_enable_monitor();
