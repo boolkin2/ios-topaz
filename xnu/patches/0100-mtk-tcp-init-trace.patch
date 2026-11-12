@@ -1,0 +1,63 @@
+diff --git a/bsd/netinet/tcp_subr.c b/bsd/netinet/tcp_subr.c
+index 1f20ef0..c2a52a2 100644
+--- a/bsd/netinet/tcp_subr.c
++++ b/bsd/netinet/tcp_subr.c
+@@ -492,6 +492,14 @@ tcp_tfo_init(void)
+ /*
+  * Tcp initialization
+  */
++#if defined(SWEET)
++/* Patch 0100: localize the tcp_init stall. */
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++#define SWEET_TCP_TAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++#endif
++
+ void
+ tcp_init(struct protosw *pp, struct domain *dp)
+ {
+@@ -534,6 +542,9 @@ tcp_init(struct protosw *pp, struct domain *dp)
+ 	SYSCTL_SKMEM_UPDATE_FIELD(tcp.now_init, tcp_now_init);
+ 
+ 	tcp_tfo_init();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','1'), 0);  /* after tfo_init */
++#endif
+ 
+ 	LIST_INIT(&tcb);
+ 	tcbinfo.ipi_listhead = &tcb;
+@@ -576,6 +587,9 @@ tcp_init(struct protosw *pp, struct domain *dp)
+ 	tcbinfo.ipi_gc = tcp_gc;
+ 	tcbinfo.ipi_timer = tcp_itimer;
+ 	in_pcbinfo_attach(&tcbinfo);
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','2'), 0);  /* after pcbinfo_attach */
++#endif
+ 
+ #define TCP_MINPROTOHDR (sizeof(struct ip6_hdr) + sizeof(struct tcphdr))
+ 	if (max_protohdr < TCP_MINPROTOHDR) {
+@@ -603,14 +617,23 @@ tcp_init(struct protosw *pp, struct domain *dp)
+ 	if (tcp_timer_list.call == NULL) {
+ 		panic("failed to allocate call entry 1 in tcp_init");
+ 	}
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','T'), 0);  /* after thread_call_allocate */
++#endif
+ 
+ 	/* Initialize TCP Cache */
+ 	tcp_cache_init();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','3'), 0);  /* after cache_init */
++#endif
+ 
+ 	tcp_mpkl_log_object = MPKL_CREATE_LOGOBJECT("com.apple.xnu.tcp");
+ 	if (tcp_mpkl_log_object == NULL) {
+ 		panic("MPKL_CREATE_LOGOBJECT failed");
+ 	}
++#if defined(SWEET)
++	sweet_late_mark(SWEET_TCP_TAG('T','C','P','4'), 0);  /* after MPKL */
++#endif
+ 
+ 	logging_config = atm_get_diagnostic_config();
+ 	if (logging_config & 0x80000000) {
