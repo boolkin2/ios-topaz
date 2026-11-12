@@ -1,0 +1,58 @@
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+index 04dda53..0142c11 100644
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -232,6 +232,15 @@ PE_initialize_console(PE_Video * info, int op)
+ 	return 0;
+ }
+ 
++#if defined(SWEET)
++/* Patch 0093: localize the stall inside PE_init_iokit (I000..I004). pmsg KVA
++ * alias is live by this point (post-TTBR-switch). */
++extern void sweet_late_mark(unsigned int tag, unsigned int val);
++#define SWEET_IOTAG(a, b, c, d) \
++	((unsigned int)(a) | ((unsigned int)(b) << 8) | \
++	 ((unsigned int)(c) << 16) | ((unsigned int)(d) << 24))
++#endif /* SWEET */
++
+ void
+ PE_init_iokit(void)
+ {
+@@ -247,6 +256,9 @@ PE_init_iokit(void)
+ 	uint32_t        populate_registry_time_value = 0;
+ 
+ 	PE_init_printf(TRUE);
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IOTAG('I','0','0','0'), 0);
++#endif
+ 
+ 	printf("iBoot version: %s\n", iBoot_version);
+ #if defined(TARGET_OS_OSX) && defined(__arm64__)
+@@ -271,6 +283,9 @@ PE_init_iokit(void)
+ 	}
+ 
+ 	pe_prepare_images();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IOTAG('I','0','0','1'), 0);
++#endif
+ 
+ 	scale = PE_state.video.v_scale;
+ 	flip = 1;
+@@ -359,8 +374,17 @@ PE_init_iokit(void)
+ 		KDBG_RELEASE(IOKDBG_CODE(DBG_BOOTER, 0), start_time_value, debug_wait_start_value, load_kernel_start_value, populate_registry_time_value);
+ 	}
+ 
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IOTAG('I','0','0','2'), 0);
++#endif
+ 	InitIOKit(PE_state.deviceTreeHead);
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IOTAG('I','0','0','3'), 0);
++#endif
+ 	ConfigureIOKit();
++#if defined(SWEET)
++	sweet_late_mark(SWEET_IOTAG('I','0','0','4'), 0);
++#endif
+ }
+ 
+ void
