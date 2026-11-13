@@ -1,0 +1,51 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 33d73df..767d711 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -265,6 +265,35 @@ kernel_bootstrap_thread_log(const char *message)
+ 	kernel_debug_string_early(message);
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/* Patch 0105: feed the MediaTek hardware watchdog (toprgu @0x1c007000, RESTART
++ * key 0x1971) from a kernel thread so the ~32s WDT does not reset the SoC while
++ * userspace init runs. Bounded (~90s) for bring-up: once it stops feeding, the
++ * WDT resets into the Android fallback and the pmsg log (init heartbeats) can be
++ * read. For a permanent userspace boot this loop should run indefinitely. */
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++static void
++sweet_wdt_feed_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	vm_offset_t wdt = ml_io_map(0x1c007000UL, 0x100);
++	if (wdt == 0) {
++		return;
++	}
++	for (int i = 0; i < 45; i++) {
++		*(volatile unsigned int *)(wdt + 0x08) = 0x1971u;
++		IOSleep(2000);
++	}
++}
++static void
++sweet_wdt_start(void)
++{
++	thread_t t;
++	if (kernel_thread_start(sweet_wdt_feed_thread, NULL, &t) == KERN_SUCCESS) {
++		thread_deallocate(t);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
++
+ extern void
+ qsort(void *a, size_t n, size_t es, int (*cmp)(const void *, const void *));
+ 
+@@ -670,6 +699,10 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_thread_log("clock_service_create");
+ 	clock_service_create();
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_wdt_start();
++#endif
++
+ 	/*
+ 	 *	Create the device service.
+ 	 */
