@@ -1,0 +1,29 @@
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index ba51b2c..9197609 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -684,6 +684,16 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 
+ 	sweet_late_mark(SWEET_RD_TAG('R','D','0','0'), 0);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/* SWEET has built-in mockfs and no kexts to wait for. The IOBSD stall blocks
++	 * forever when the resource is never published (or the wait deadline does not
++	 * fire); publish it directly and skip the wait so root setup can proceed. */
++	sweet_late_mark(SWEET_RD_TAG('R','D','0','9'), 0);
++	IOService::publishResource("IOBSD");
++	matching = NULL;
++	service = NULL;
++	sweet_late_mark(SWEET_RD_TAG('R','D','0','A'), 0);
++#else
+ 	// stall here for anyone matching on the IOBSD resource to finish (filesystems)
+ 	matching = IOService::serviceMatching(gIOResourcesKey);
+ 	assert(matching);
+@@ -696,6 +706,7 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	}
+ 	matching->release();
+ 	matching = NULL;
++#endif
+ 
+ 	if (mountAttempts++) {
+ 		IOLog("mount(%d) failed\n", mountAttempts);
