@@ -1,0 +1,73 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 4333f59..189cc02 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -267,6 +267,60 @@ sweet_wdt_start(void)
+ 		thread_deallocate(t);
+ 	}
+ }
++
++/* Patch 0106: refresh the MediaTek DSI command-mode panel from a kernel
++ * thread so XNU's video_console output (boot_args->Video filled by the
++ * shim: FB 0xfcacf000, 2296x2000, 32bpp, pitch 9184) becomes VISIBLE.
++ * A command-mode panel keeps showing the last frame sent until the DSI
++ * engine re-triggers it; XNU has no display driver, so this thread repeats
++ * the exact trigger sequence proven in the bare-metal menu (RULES_READ_
++ * FIRST SS2): DSI_MODE_CTRL=0 -> DSC_SHADOW|=1 -> DSC_CON|=1 -> MUTEX0
++ * CFG=0, EN 0->1 -> SIMUTEX0 EN 0->1 -> DSI_START 0->1, then bounded spin
++ * until DSI_INTSTA busy (bit31) clears. Registers: DSI0 0x14017000,
++ * DSC_WRAP0 0x14015000, MUTEX0 0x14001000, SIMUTEX0 0x14401000.
++ * All mapped VM_WIMG_IO (Device) by ml_io_map -> write ordering is fine
++ * with the MMU on. ~10 fps is plenty for boot logs. */
++static void
++sweet_fb_refresh_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	vm_offset_t dsi  = ml_io_map(0x14017000UL, 0x1000);
++	vm_offset_t dsc  = ml_io_map(0x14015000UL, 0x1000);
++	vm_offset_t mux  = ml_io_map(0x14001000UL, 0x1000);
++	vm_offset_t smux = ml_io_map(0x14401000UL, 0x1000);
++	uint64_t deadline;
++	if (dsi == 0 || dsc == 0 || mux == 0 || smux == 0) {
++		return;
++	}
++	for (;;) {
++		int i;
++		*(volatile unsigned int *)(dsi + 0x14) = 0u;                    /* DSI_MODE_CTRL */
++		*(volatile unsigned int *)(dsc + 0x200) |= 1u;                  /* DSC_SHADOW */
++		*(volatile unsigned int *)(dsc + 0x000) |= 1u;                  /* DSC_CON */
++		*(volatile unsigned int *)(mux + 0x08) = 0u;                    /* MUTEX_CFG */
++		*(volatile unsigned int *)(mux + 0x20) = 0u;                    /* MUTEX_EN */
++		*(volatile unsigned int *)(mux + 0x20) = 1u;
++		*(volatile unsigned int *)(smux + 0x08) = 0u;                   /* SIMUTEX CFG */
++		*(volatile unsigned int *)(smux + 0x20) = 0u;                   /* SIMUTEX EN */
++		*(volatile unsigned int *)(smux + 0x20) = 1u;
++		*(volatile unsigned int *)(dsi + 0x00) = 0u;                    /* DSI_START */
++		*(volatile unsigned int *)(dsi + 0x00) = 1u;
++		for (i = 0; i < 1000000; i++) {
++			if ((*(volatile unsigned int *)(dsi + 0x0c) & 0x80000000u) == 0u) {
++				break;                                                  /* DSI_INTSTA busy */
++			}
++		}
++		clock_interval_to_deadline(100, NSEC_PER_MSEC, &deadline);
++		clock_delay_until(deadline);
++	}
++}
++static void
++sweet_fb_refresh_start(void)
++{
++	thread_t t;
++	if (kernel_thread_start(sweet_fb_refresh_thread, NULL, &t) == KERN_SUCCESS) {
++		thread_deallocate(t);
++	}
++}
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
+ 
+ extern void
+@@ -676,6 +730,7 @@ kernel_bootstrap_thread(void)
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ 	sweet_wdt_start();
++	sweet_fb_refresh_start();
+ #endif
+ 
+ 	/*
