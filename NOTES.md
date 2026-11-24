@@ -1,5 +1,69 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## >>> ACTIVE WORK: MediaTek MT6983 / Tecno Phantom V Fold 1 (AD10) — read this first <<<
+
+**This repo's `mt6983` branch is a DIFFERENT target from the sweet/SM7150 history below.**
+We boot rebuilt SWEET XNU (xnu-8796.141.3) bare-metal on MediaTek Dimensity 9000+ via a
+shim loaded by LK as a gzip'd ARM64 Image in boot.img (header v4). Reference sweet ports
+are Qualcomm — reuse mechanics, NEVER their hardware values. Detailed journal:
+`D:\сетевой\probe\note_shim2_wdt_channel.md` + `STATUS_TABLE.md` (section 0 = current).
+
+- **Goal:** Apple logo + booted iOS on the AD10 phone. User pre-authorized autonomous
+  flash iterations ("делай все что нужно"). Phone daily-driver; slot `_b` = Android
+  fallback, NEVER touch boot_b/stock. Flash boot_a only, set_active a.
+- **Debug channel:** pmsg ramoops @ PA 0x48130000, read from Android
+  `/sys/fs/pstore/pmsg-ramoops-0`. Markers survive reset (dc civac).
+- **CI:** GitHub Actions `xnu.yml`, macos-15 + Xcode 16.4 + patch 0084 (iig kernelContent).
+  Push to `b2/mt6983` (boolkin2/ios-topaz fork; MakrSas 403). 0-job/cancelled = runner
+  capacity, rerun. Commit identity `git -c user.name=Makr -c user.email=ngrom33@gmail.com`.
+- **Patch chain:** 0083 early markers, 0085 pmsg V=P alias (AP_RWNA=AP(0) PAN-safe),
+  0086/0087 C-markers, 0088 pmsg survives TTBR-switch, 0089 W000-W007 in arm_vm_init,
+  0090 guard remap + W008/W009, 0103 IOBSD/md0 root, 0104 console→pmsg,
+  0105 WDT feed, 0106 DSI panel refresh thread. HEAD 13764ee.
+- **Current blocker (Phase 1):** kernel + HFS + real launchd PID1 are proven (v198e:
+  `hfs: mounted iOSRoot` → `libignition: hello`). The remaining wall is dyld shared
+  cache. v199 transfers a 2.5 GiB HFS image (root closure + DSC) over SPUSH/RNDIS
+  to RAM `0x100000000..0x1a0000000`; `mem_size=0x180000000`. Success = launchd
+  finds the DSC and stays PID1 (no `Library not loaded`/`mmap errno=22`).
+- **Display:** command-mode NT37900 panel on DSI0=0x14017000. LK RE (lk_full.dis, file
+  offsets) PROVED: RDMA start `+0=0,+0x10|=1,+0xbc|=4,+0xbc|=2` @0x46ab8; RDMA update
+  handshake SEC_CTRL(0x6010) bit4 @0x46ca4; mutex trigger CTL(+8)=0,EN(+0x20)=1 @0x465c4;
+  MMSYS init @0x465dc: 0x140000f4=0xf500,0x140000f8=0x03 (real routing) + 0x14000108/118/1a8
+  =0xffffffff. **v8 CORRECTION: 0x108/0x118/0x1a8 are NOT routing — they are CG_SET0/1/2
+  (clock-gate SET, write-1-to-set, READ-AS-0).** Proof: clk-enable@0x40d84 base=0x14000108
+  RMW|=mask; clk-disable@0x40f70 base=0x14000104 (CG_CLR). So 0x465dc's 0xffffffff = UNGATE
+  ALL MMSYS clocks; v7's "readback 0" was EXPECTED (W1S), not a failed write. Clock STATE is
+  CG_CON0=0x100/CON1=0x110/CON2=0x1a0 (v8 dumps these). Routing 0xf4/0xf8 already LK-left.
+  VM_CMD_CON=DSI+0x200 CONFIRMED (ELF .rodata+0x5f218=0x200). **v7 CORRECTION: the old
+  "LK has NO `orr #0x21` → LK does NOT use the DSI VM engine" was WRONG** — the search
+  looked for ONE `orr #0x21` instruction, but LK enables VM_CMD_CON with TWO RMW ops
+  `|=0x20` then `|=0x1` @0x3f3a4-0x3f3b8 (copies 0x11a77c/0x1e8fb0, x26=0x14017200=DSI0+0x200).
+  DRM agrees: mtk_dsi_set_vm_cmd@0xb2318 RMW|=1,|=0x20; mtk_dsi_vm_cmdq@0xa1d04 (0xa1d94
+  `mov w9,#0x21`) writes VM_CMD_CON=word|0x21. LK DCS path writes cmd word→DSI+0x200,
+  trigger→DSI+0x60 (0x8001 short / 0x8002+(n>>2) long), 0x6c bit16 CLEAR, DSI_START toggle
+  @0x3d89c/0x3ebec; panel addr-window set_page(0x2A)+set_column(0x2B)+write_memory_start
+  (0x2C,word 0x2c3909) @0x4df00. DSI instance select = bit22 (DSI1=0x14417000).
+  **v6 LIVE (pmsg_trig6): mutex FIRED (EN→0), RDMA relay 0xbc=0x7, but CMD_FSM(0x160)=0x10001
+  idle, VM_CMD_CON(0x200)=0.** Diagnosis: control path OVL→RDMA works, but DSI command/VM
+  engine is OFF (0x200=0, bit0 auto-clears after LK's frame) so DSI never accepts/packages the
+  RDMA pixel stream. **v7 LIVE (pmsg_trig7): VM_CMD_CON(0x200)=0x21 STUCK (engine ON), RDMA
+  relay 0xbc=0x7, EN=0x101, mutex FIRED (EN→0), but CMD_FSM(0x160)=0x10001 STILL idle.**
+  MMSYS 0x108/118/1a8 read 0 = CG_SET W1S read-as-0 (NOT a failure, see v8 correction above).
+  **Probe v8 (disp_trigger.c) adds the missing per-frame DCS write_memory_start kick BEFORE
+  the mutex trigger: cmd-word 0x2c3909→DSI+0x200 (OR VM-enable bits), DSI+0x60=0x8001, 0x6c
+  bit16 clear, DSI_START 0→1, poll 0x0c bit31 (LK 0x4df00/0x3d89c/0x3ebec). Also clears DSI
+  INTSTA(0x08) W1C, dumps CG_CON(0x100/0x110/0x1a0)+INTEN/INTSTA/MODE_CON(0x14)/TXRX_CON(0x18),
+  re-asserts routing 0xf4/0xf8. Keeps VM enable + full LK-left/post dumps + TRG markers +
+  4-color pattern + wdt_arm(10)+wfe. Builds PASS (9660B), 0 warnings. NOT flashed (phone busy).**
+  Rationale: command-mode panel must receive DCS 0x2C to enter pixel-receive state; without it
+  the mutex latches the tract but DSI has nothing to send → CMD_FSM idle. EXT_TE: mutex SOF=0 =
+  SW trigger (no TE wait); DSI MODE/TXRX left as LK (dumped, not touched). If v8 still idle:
+  read DCFS (CMD_FSM right after DCS kick) vs TRG8 (after mutex) to see which stage activates;
+  try 0x60=0x8002 long trigger, restore 0x200=0x21 after kick, or send 0x2A/0x2B window first.
+  mkadt_mtk.py has NO sweet-fbcon node yet.
+- **Build:** WSL Debian `baremetal/build_mtk.sh <kernel>` (ADT→payload→shim→boot_a.img).
+  Scripts to files (no inline python). MSYS_NO_PATHCONV=1 for wsl/adb/fastboot in Git Bash.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

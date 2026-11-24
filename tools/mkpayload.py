@@ -26,7 +26,7 @@ ADT and boot_args, inside topOfKernelData (never handed to the VM), and the
 ADT gets /chosen/memory-map "RAMDisk" = <phys, size> for IOFindBSDRoot to
 turn into md0 (boot with rd=md0).
 """
-import argparse, os, struct, sys
+import argparse, gzip, io, os, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adt  # noqa: E402
@@ -140,7 +140,7 @@ def adt_dram(adt_blob):
             struct.unpack('<Q', chosen.prop('dram-size'))[0])
 
 
-def build(kernel_path, adt_path, cmdline, ramdisk_path=None):
+def build(kernel_path, adt_path, cmdline, ramdisk_path=None, compress=False):
     buf = bytearray(open(kernel_path, 'rb').read())
     m = parse_macho(buf)
     nfix = apply_chained_fixups(buf, m)
@@ -171,11 +171,24 @@ def build(kernel_path, adt_path, cmdline, ramdisk_path=None):
     hdr_size = SEG_TABLE + 32 * len(pieces)
     out = bytearray(hdr_size)
     seg_table = []
+    GZ_FLAG = 1 << 63
     for vmaddr, vmsize, data in pieces:
         off = len(out)
-        out += data
+        stored = data
+        flag = 0
+        if compress and len(data) > 0x10000:
+            # The shim inflates in place, so the boot image stays small even
+            # with a multi-hundred-MB ramdisk. mtime=0 keeps the gzip header
+            # exactly 10 bytes (the shim skips 10 and drops the 8-byte tail).
+            buf = io.BytesIO()
+            with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6, mtime=0) as gz:
+                gz.write(data)
+            packed = buf.getvalue()
+            if len(packed) < len(data) - 64:
+                stored, flag = packed, GZ_FLAG
+        out += stored
         out += b'\0' * (-len(out) & 0xf)
-        seg_table.append((vmaddr, vmsize, off, len(data)))
+        seg_table.append((vmaddr, vmsize, off, len(stored) | flag))
     adt_off = len(out)
     out += adt_blob
     out += b'\0' * (-len(out) & 0xf)
@@ -198,8 +211,10 @@ if __name__ == '__main__':
     ap.add_argument('kernel'); ap.add_argument('adt'); ap.add_argument('out')
     ap.add_argument('--cmdline', default='debug=0xc serial=3 cpus=1 keepsyms=1')
     ap.add_argument('--ramdisk', help='root image for md0 (boot with rd=md0)')
+    ap.add_argument('--compress', action='store_true',
+                    help='gzip segments; the shim inflates them in place')
     a = ap.parse_args()
-    blob, info = build(a.kernel, a.adt, a.cmdline, a.ramdisk)
+    blob, info = build(a.kernel, a.adt, a.cmdline, a.ramdisk, a.compress)
     open(a.out, 'wb').write(blob)
     for k, v in info.items():
         if k != 'segs':

@@ -1,0 +1,24 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -287,11 +287,20 @@
+ 	vm_offset_t dsc  = ml_io_map(0x14015000UL, 0x1000);
+ 	vm_offset_t mux  = ml_io_map(0x14001000UL, 0x1000);
+ 	vm_offset_t smux = ml_io_map(0x14401000UL, 0x1000);
++	vm_offset_t fb = ml_static_ptovirt(0xfcacf000UL);
+ 	uint64_t deadline;
+-	if (dsi == 0 || dsc == 0 || mux == 0 || smux == 0) {
++	if (dsi == 0 || dsc == 0 || mux == 0 || smux == 0 || fb == 0) {
+ 		return;
+ 	}
++	kprintf("SWEET FB: refresh thread live, fb=%p\n", (void *)fb);
+ 	for (;;) {
++		vm_offset_t off;
++		/* The console writes through a WCOMB mapping; clean the same PA
++		 * through the normal physmap alias so DSI sees the latest pixels. */
++		for (off = 0; off < 9184UL * 2000UL; off += 64) {
++			__asm__ volatile("dc civac, %0" :: "r"(fb + off) : "memory");
++		}
++		__asm__ volatile("dsb sy" ::: "memory");
+ 		int i;
+ 		*(volatile unsigned int *)(dsi + 0x14) = 0u;                    /* DSI_MODE_CTRL */
+ 		*(volatile unsigned int *)(dsc + 0x200) |= 1u;                  /* DSC_SHADOW */
